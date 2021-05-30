@@ -29,15 +29,13 @@ def callback(data):
 		Map.to_csv(output_directory)
 		map_saved = True
 
-		print('Map saved!')
-
-	return 
+		print('Map saved!') 
 
 def listener():
 	rospy.Subscriber('line_segments', LineSegmentList, callback)
 		 
 if __name__ == '__main__':
 	try:
-        listener()
-    except rospy.ROSInterruptException:
+	    listener()
+	except rospy.ROSInterruptException:
         pass

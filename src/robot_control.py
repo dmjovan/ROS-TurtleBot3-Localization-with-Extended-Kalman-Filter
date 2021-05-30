@@ -5,7 +5,7 @@
 
 # Ucitavanje potrebnih biblioteka i struktura poruka
 import rospy
-from ROS_TurtleBot3_Localization_with_Extended_Kalman_Filter.srv import control, controlResponse
+from domaci_4.srv import control, controlResponse
 from std_msgs.msg import String
 
 # Inicijalizacija globalnog publisher-a na topic /vel_control

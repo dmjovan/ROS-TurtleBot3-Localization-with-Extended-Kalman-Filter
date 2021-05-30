@@ -36,7 +36,7 @@ def loadMap():
 
     M[:,0] = df['rho'].to_numpy().reshape((N_segments,1))
     M[:,1] = df['alpha'].to_numpy().reshape((N_segments,1))
-
+    
     return M
 
 # -------------FUNKCIJE ZA IMPLEMENTACIJU PROSIRENOG KALMANOVOG FILTRA---------------
@@ -292,8 +292,8 @@ if __name__ == '__main__':
         rospy.init_node('lokalizacija_robota_EKF', anonymous=False)
 
         vel = Twist()
-
         pub_velocities = rospy.Publisher('cmd_vel', Twist, queue_size = 1)
+
         rospy.Subscriber('line_segments', LineSegmentList, lidar_callback)
         rospy.Subscriber('joint_states',JointState, joint_callback)
         rospy.Subscriber('vel_control', String, velocity_callback)
@@ -312,7 +312,8 @@ if __name__ == '__main__':
             X_prev = X
             P_prev = P
 
-            X_est, P_est = getApriori(X_prev, P_prev, U, b)
+            X_est, P_est = getAprioriPrediction(X_prev, P_prev, U, b)
+
             V, H_est, R_est = associateMeasurement(X_est, P_est, Z, R, M, g)
 
             X_final, P_final = filterStep(X_est, P_est, V, H_est, R_est)
