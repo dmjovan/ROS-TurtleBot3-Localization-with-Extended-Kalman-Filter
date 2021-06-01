@@ -28,15 +28,15 @@ from laser_line_extraction.msg import LineSegment,LineSegmentList
 # Funkcija za dohvatanje mape formirane pokretanjem programa make_map.py
 def loadMap():
 
-    df = pd.read_csv('map.csv')
+    df = pd.read_csv('Workspaces/getting_started/src/domaci_4/src/map.csv')
 
     N_segments = len(df)
 
     M = np.zeros((N_segments,2))
 
-    M[:,0] = df['rho'].to_numpy().reshape((N_segments,1))
-    M[:,1] = df['alpha'].to_numpy().reshape((N_segments,1))
-    
+    M[:,0] = df['rho'].to_numpy().reshape((N_segments,))
+    M[:,1] = df['alpha'].to_numpy().reshape((N_segments,))
+
     return M
 
 # -------------FUNKCIJE ZA IMPLEMENTACIJU PROSIRENOG KALMANOVOG FILTRA---------------
@@ -56,14 +56,14 @@ def transitionFunction(X_prev, U, b):
 
     theta = X_est[2,0]
 
-    Fx = np.array([[1, 0, -koef1*sin(theta+k2)],
-                   [0, 1,  koef1*cos(theta+k2)],
+    Fx = np.array([[1, 0, -koef1*sin(theta+koef2)],
+                   [0, 1,  koef1*cos(theta+koef2)],
                    [0, 0, 1]])
 
-    Fu11 = 0.5*(cos(theta+k2)+1/b*sin(theta+k2)*koef1)
-    Fu12 = 0.5*(cos(theta+k2)-1/b*sin(theta+k2)*koef1)
-    Fu21 = 0.5*(sin(theta+k2)-1/b*cos(theta+k2)*koef1)
-    Fu22 = 0.5*(sin(theta+k2)+1/b*cos(theta+k2)*koef1)
+    Fu11 = 0.5*(cos(theta+koef2)+1/b*sin(theta+koef2)*koef1)
+    Fu12 = 0.5*(cos(theta+koef2)-1/b*sin(theta+koef2)*koef1)
+    Fu21 = 0.5*(sin(theta+koef2)-1/b*cos(theta+koef2)*koef1)
+    Fu22 = 0.5*(sin(theta+koef2)+1/b*cos(theta+koef2)*koef1)
     Fu31 = -1/b
     Fu32 = 1/b
 
@@ -90,7 +90,7 @@ def getAprioriPrediction(X_prev, P_prev, U, b):
 
 def measurementFunction(X_est, m_i):
 
-    x_est, y_est, theta_est = X_est[0,0], X_est[0,1], X_est[0,2]
+    x_est, y_est, theta_est = X_est[0,0], X_est[1,0], X_est[2,0]
 
     w_rho_i, w_alpha_i = m_i[0,0],  m_i[0,1]
 
@@ -113,14 +113,14 @@ def associateMeasurement(X_est, P_est, Z, R, M, g):
     Sigma_IN = np.zeros((N_segments, N_obs, 2, 2))
 
     for i in range(N_segments):
-        m_i = M[i,:]
+        m_i = M[i,:].reshape((1,2))
         z_hat, H_hat_i = measurementFunction(X_est, m_i)
         H_hat[i,:,:] = H_hat_i
 
         for j in range(N_obs):
-            z = Z[:,j].reshape(2,1)
-            V[i,j,:] = z-z_hat
-            Sigma_IN[i,j,:,:] = np.dot(np.dot(H_hat_i, P_est), np.traspose(H_hat_i)) + R[j,:,:]
+            z = Z[:,j].reshape((2,1))
+            V[i,j,:] = (z-z_hat).flatten()
+            Sigma_IN[i,j,:,:] = np.dot(np.dot(H_hat_i, P_est), np.transpose(H_hat_i)) + R[j,:,:]
 
     V_valid=[]
     H_valid=[]
@@ -187,9 +187,6 @@ def lidar_callback(data):
 
         R_temp.append(covariance.reshape((2,2)))
 
-    # if(len(Z_temp) == 0):
-    #     sys.exit() # zaglavljen robot, odnosno ne vidi nista
-
     Z = np.transpose(np.array(Z_temp)) # Z.shape = 2xk
     R = np.array(R_temp) # R.shape = kx2x2
 
@@ -202,6 +199,15 @@ def odom_callback(data):
 
     P_odom_temp = np.array(covariance)
 
+    # indeksi koji su validni iz kovarijacione metrice 6x6 
+    #                x     y     z  theta_x theta_y theta_z 
+    #       x ->  [ (0),  (1),   2,    3,      4,    (5)]
+    #       y ->  [ (6),  (7),   8,    9,     10,   (11)]
+    #       z ->  [  12,   13,  14,   15,     16,     17]
+    # Theta_x ->  [  18,   19,  20,   21,     22,     23]
+    # Theta_y ->  [  24,   25,  26,   27,     28,     29]
+    # Theta_z ->  [(30), (31),  32,   33,     34,   (35)]
+
     idx = [0,1,5,6,7,11,30,31,35]
 
     P_odom = P_odom_temp[idx].reshape((3,3))
@@ -213,121 +219,92 @@ def odom_callback(data):
 
     X_odom = np.transpose(np.array([pose.x,pose.y,theta]))
 
-    # TimeStamp-ovi /joint_states topic-a imaju vremensku razliku od 33ms
-
-    T = 0.033 #[s] 
-
-    v = data.twist.twist.linear.x
-    w = data.twist.twist.angular.z
-
-    # b = rastojanje izmedju tockova
-    v_l = (v + w*b/2)/2 # linearna brzina levog tocka 
-    v_r = (v - w*b/2)/2 # linearna brzina levog tocka 
-
-    # procenjeno sledece upravljanje, ZAVISI OD PERIODE
-    U[0,0] = U[0,0] + T*v_l
-    U[1,0] = U[1,0] + T*v_r
-    
 def joint_callback(data):
 
-    global U
+    global sr_t, sl_t, wheel_diameter
 
-    delta_sr = data.position[0] - sr_last
-    delta_sl = data.position[1] - sl_last
+    # predjeni put desnog tocka od pocetka rada programa
+    sr_t = data.position[0]*0.5*wheel_diameter # konvezija u metre
 
-    sr_last = data.position[0]
-    sl_last = data.position[1]
+    # predjeni put levog tocka od pocetka rada programa
+    sl_t = data.position[1]*0.5*wheel_diameter # konvezija u metre
 
-    U = np.array([delta_sl, delta_sr]).reshape(2,1)
-
-# -------------------------KONTROLA KRETANJA ROBOTA-----------------------------------
-#
-# Funkcija za pomeranje robota
-def move_robot(linear_vel, angular_vel):
-
-    global vel, pub_velocities
-
-    vel.linear.x = linear_vel
-    vel.angular.z = angular_vel
-
-    pub_velocities.publish(vel)
-
-    return 
-
-# Callback funkcija preko koje se vrsi pomeranje robota
-def velocity_callback(data):
-
-    try:
-        inputs = data.data
-        linear_vel, angular_vel = inputs.split(' ')
-        linear_vel = float(linear_vel)
-        angular_vel = float(angular_vel)
-
-        move_robot(linear_vel, angular_vel)
-
-    except:
-        pass
-
-# ------------------------------GLAVNI PROGRAM----------------------------------------
+# -------------------------------GLAVNI PROGRAM----------------------------------------
 #
 # Glavni program za pokretanje svih gore navedenih funkcionalnosti
 if __name__ == '__main__':
 
     try:
+        # mapa
         M = loadMap()
 
+        # b je rastojanje izmedju tockova robota
         b = 0.160 #[m]
-        g = 0.1
 
-        Z = None
-        R = None
+        # wheel_diameter je precnik tockova robota 
+        wheel_diameter = 0.066 #[m]
+
+        # prag za Mahalonobisovu distancu
+        g = 0.1
+        
+
+        Z = []
+        R = []
 
         sr_last = 0
         sl_last = 0
+
+        sl_t_1 = 0
+        sr_t_1 = 0
+        sr_t = 0
+        sl_t = 0
 
         U = np.zeros((2,1))
         X_odom = np.zeros((3,1))
         P_odom = np.zeros((3,3))
 
-        rospy.init_node('lokalizacija_robota_EKF', anonymous=False)
-
         vel = Twist()
         pub_velocities = rospy.Publisher('cmd_vel', Twist, queue_size = 1)
 
-        rospy.Subscriber('line_segments', LineSegmentList, lidar_callback)
+        rospy.init_node('robot_localization_EKF', anonymous=False, disable_signals=True)
+        
         rospy.Subscriber('joint_states',JointState, joint_callback)
-        rospy.Subscriber('vel_control', String, velocity_callback)
         rospy.Subscriber('odom', Odometry, odom_callback)
+        rospy.Subscriber('line_segments', LineSegmentList, lidar_callback)
 
-        X = np.zeros((3,1))
-        P = P_odom
+        pub_estimations = rospy.Publisher('position_estimations', String, queue_size = 1)
 
-        # ceka se promena u lidar_callback funkciji
-        while Z == None or R == None: 
+        X_final = np.zeros((3,1))
+        P_final = P_odom
+
+        while isinstance(Z, list) or isinstance(R, list):
             continue
 
         # prosireni Kalmanov Filtar
         while True:
 
-            X_prev = X
-            P_prev = P
+            delta_sl = sl_t - sl_t_1
+            delta_sr = sr_t - sr_t_1
+            sl_t_1 = sl_t
+            sr_t_1 = sr_t
+            U = np.array([delta_sl, delta_sr]).reshape(2,1)
+
+            X_prev = X_final
+            P_prev = P_final
 
             X_est, P_est = getAprioriPrediction(X_prev, P_prev, U, b)
-
             V, H_est, R_est = associateMeasurement(X_est, P_est, Z, R, M, g)
 
             X_final, P_final = filterStep(X_est, P_est, V, H_est, R_est)
             
             print('--------------------------------------------------------')
-
-            print('Pozicija :\n{} \nOdometrija:\n{}'.format(np.flatten(X_final), X_odom)) 
-            print('Kovarijaciona matrica: \n{} \nOdometrija:\n{}'.format(P_final, P_odom))
-
+            print('Estimirana pozicija: \n{} \nPozicija sa odometrija:\n{}\n'.format(X_final.flatten(), X_odom)) 
+            print('Kovarijaciona matrica: \n{} \nKovarijaciona matrica sa odometrija:\n{}'.format(P_final, P_odom))
             print('--------------------------------------------------------')
 
-            U = np.zeros((2,1))
+            pub_estimations.publish(str(X_final[0,0]) + ' ' + str(X_final[1,0]) + ' ' + str(X_final[2,0]))
 
-            time.sleep(0.5)
+            time.sleep(1)
 
     except rospy.ROSInterruptException:
         pass
